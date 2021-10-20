@@ -1,6 +1,6 @@
 from typing import Optional
 
-from numpy import ndarray, eye, multiply, sqrt
+from numpy import ndarray, eye
 from numpy.linalg import solve
 from scipy.sparse import csr_matrix
 from tqdm.auto import trange
@@ -39,13 +39,5 @@ class ALS(MatrixFactorizationBase):
             # fix items
             self._U = self._als_step(self._V, self._U, user_item_csr)
 
-            predictions = self._U.dot(self._V.T)
-            error = user_item_csr - predictions
-            error = multiply(error, error)
-            mse = error.sum() / user_item_csr.count_nonzero()
-            epoch_bar.set_postfix({"mse": round(mse, 3)})
+            epoch_bar.set_postfix({"mse": round(self.calculate_mse_loss(user_item_csr), 3)})
         epoch_bar.close()
-
-    def _get_user_distances(self, user_id: int) -> ndarray:
-        distances = (self._U[[user_id]].dot(self._V.T))[0]
-        return distances

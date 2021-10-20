@@ -2,7 +2,7 @@ from typing import Optional
 
 import numpy
 from numpy import ndarray
-from tqdm.auto import tqdm
+from tqdm.auto import tqdm, trange
 
 from homework_1.matrix_factorization_base import MatrixFactorizationBase
 
@@ -42,11 +42,11 @@ class SVD(MatrixFactorizationBase):
 
         self.__avg_bias = numpy.mean(ratings)
 
-        epoch_bar = tqdm(range(self.__steps), total=self.__steps, desc="Epoch")
-        for _ in epoch_bar:
+        epoch_range = trange(self.__steps, desc="Epoch")
+        for _ in epoch_range:
             mse = 0.0
             order = numpy.random.permutation(len(ratings))
-            for idx in tqdm(order, desc="Ratings", leave=False):
+            for idx in tqdm(order):
                 user_id, item_id = user_ids[idx], item_ids[idx]
 
                 user_emb = self._U[user_id]
@@ -67,9 +67,8 @@ class SVD(MatrixFactorizationBase):
                 self.__item_biases[item_id] -= self.__lr * dvu
 
                 mse += error ** 2
-
-            epoch_bar.set_postfix({"mse": round(mse / len(ratings), 3)})
-        epoch_bar.close()
+            epoch_range.set_postfix({"mse": round(mse / len(ratings), 3)})
+        epoch_range.close()
 
     def _get_user_distances(self, user_id: int) -> ndarray:
         distances = (self._U[[user_id]].dot(self._V.T))[0]

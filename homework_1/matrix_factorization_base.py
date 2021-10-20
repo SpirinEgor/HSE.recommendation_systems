@@ -3,7 +3,7 @@ from typing import List, Tuple, Optional
 
 import numpy
 from implicit.evaluation import csr_matrix
-from numpy import ndarray, argsort
+from numpy import ndarray, argsort, multiply
 from sklearn.metrics.pairwise import cosine_similarity
 
 
@@ -25,9 +25,9 @@ class MatrixFactorizationBase:
     def fit(self, *args, **kwargs):
         raise NotImplementedError()
 
-    @abstractmethod
     def _get_user_distances(self, user_id: int) -> ndarray:
-        raise NotImplementedError()
+        distances = (self._U[[user_id]].dot(self._V.T))[0]
+        return distances
 
     def similar_items(self, item_id: int, n_samples: int = 10) -> List[Tuple[int, float]]:
         if self._V is None:
@@ -52,3 +52,11 @@ class MatrixFactorizationBase:
         user_ratings = user_item_csr[user_id].todense()
         result = [(i, d) for i, d in zip(closest, distances) if user_ratings[0, i] == 0]
         return result[:n_samples]
+
+    def calculate_mse_loss(self, ratings: csr_matrix) -> float:
+        predictions = self._U.dot(self._V.T)
+        error = ratings - predictions
+        error[predictions == 0] = 0
+        error = multiply(error, error)
+        mse = error.sum() / ratings.count_nonzero()
+        return mse
