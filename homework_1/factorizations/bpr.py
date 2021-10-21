@@ -5,7 +5,7 @@ from scipy.sparse import csr_matrix
 from scipy.special import expit
 from tqdm.auto import trange, tqdm
 
-from homework_1.matrix_factorization_base import MatrixFactorizationBase
+from matrix_factorization_base import MatrixFactorizationBase
 
 
 class BPR(MatrixFactorizationBase):
@@ -22,6 +22,33 @@ class BPR(MatrixFactorizationBase):
         self.__steps = steps
         self.__lambda = reg_lambda
 
+    def _step(self, user_id: int, pos_sample: int, user_item_csr: csr_matrix) -> float:
+        neg_sample = numpy.random.choice(user_item_csr.shape[1])
+        while user_item_csr[user_id, neg_sample] != 0:
+            neg_sample = numpy.random.choice(user_item_csr.shape[1])
+
+        # [ d ]
+        user_emb = self._U[user_id]
+        pos_item_emb = self._V[pos_sample]
+        neg_item_emb = self._V[neg_sample]
+
+        diff = pos_item_emb - neg_item_emb
+
+        # [ 1 ]
+        r_uij = numpy.dot(user_emb, diff)
+        sigmoid = expit(r_uij)
+
+        # [ d ]
+        du = sigmoid * diff + self.__lambda * user_emb
+        dpi = sigmoid * user_emb + self.__lambda * pos_item_emb
+        dni = sigmoid * -user_emb + self.__lambda * neg_item_emb
+
+        self._U[user_id] -= self.__lr * du
+        self._V[pos_sample] -= self.__lr * dpi
+        self._V[neg_sample] -= self.__lr * dni
+
+        return numpy.log(sigmoid)
+
     def fit(self, user_item_csr: csr_matrix):
         n_users, n_items = user_item_csr.shape
         self._init_matrices(n_users, n_items)
@@ -35,31 +62,7 @@ class BPR(MatrixFactorizationBase):
             order = numpy.random.permutation(n_samples)
             log_loss = 0
             for user_id, pos_sample in tqdm(zip(user_item_coo.row[order], user_item_coo.col[order]), total=n_samples):
-                neg_sample = numpy.random.choice(n_items)
-                while user_item_csr[user_id, neg_sample] != 0:
-                    neg_sample = numpy.random.choice(n_items)
-
-                # [ d ]
-                user_emb = self._U[user_id]
-                pos_item_emb = self._V[pos_sample]
-                neg_item_emb = self._V[neg_sample]
-
-                diff = pos_item_emb - neg_item_emb
-
-                # [ 1 ]
-                r_uij = numpy.dot(user_emb, diff)
-                sigmoid = expit(r_uij)
-
-                # [ d ]
-                du = sigmoid * diff + self.__lambda * user_emb
-                dpi = sigmoid * user_emb + self.__lambda * pos_item_emb
-                dni = sigmoid * -user_emb + self.__lambda * neg_item_emb
-
-                self._U[user_id] -= self.__lr * du
-                self._V[pos_sample] -= self.__lr * dpi
-                self._V[neg_sample] -= self.__lr * dni
-
-                log_loss += numpy.log(sigmoid)
+                log_loss += self._step(user_id, pos_sample, user_item_csr)
 
             epoch_range.set_postfix({"log loss": round(log_loss / n_samples, 3)})
         epoch_range.close()
