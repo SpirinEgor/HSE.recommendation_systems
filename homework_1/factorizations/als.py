@@ -5,7 +5,7 @@ from numpy.linalg import solve
 from scipy.sparse import csr_matrix
 from tqdm.auto import trange
 
-from matrix_factorization_base import MatrixFactorizationBase
+from .matrix_factorization_base import MatrixFactorizationBase
 
 
 class ALS(MatrixFactorizationBase):

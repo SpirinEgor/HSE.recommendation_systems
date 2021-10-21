@@ -5,7 +5,7 @@ from scipy.sparse import csr_matrix
 from scipy.special import expit
 from tqdm.auto import trange, tqdm
 
-from matrix_factorization_base import MatrixFactorizationBase
+from .matrix_factorization_base import MatrixFactorizationBase
 
 
 class BPR(MatrixFactorizationBase):
@@ -22,30 +22,31 @@ class BPR(MatrixFactorizationBase):
         self.__steps = steps
         self.__lambda = reg_lambda
 
-    def _step(self, user_id: int, pos_sample: int, user_item_csr: csr_matrix) -> float:
+    @staticmethod
+    def _sample_negative(user_id: int, user_item_csr: csr_matrix) -> int:
         neg_sample = numpy.random.choice(user_item_csr.shape[1])
         while user_item_csr[user_id, neg_sample] != 0:
             neg_sample = numpy.random.choice(user_item_csr.shape[1])
+        return neg_sample
 
+    def _gradient_step(self, loss: float, user_id: int, pos_sample: int, neg_sample: int):
         # [ d ]
-        user_emb = self._U[user_id]
-        pos_item_emb = self._V[pos_sample]
-        neg_item_emb = self._V[neg_sample]
-
-        diff = pos_item_emb - neg_item_emb
-
-        # [ 1 ]
-        r_uij = numpy.dot(user_emb, diff)
-        sigmoid = expit(r_uij)
-
-        # [ d ]
-        du = sigmoid * diff + self.__lambda * user_emb
-        dpi = sigmoid * user_emb + self.__lambda * pos_item_emb
-        dni = sigmoid * -user_emb + self.__lambda * neg_item_emb
+        du = loss * (self._V[pos_sample] - self._V[neg_sample]) + self.__lambda * self._U[user_id]
+        dpi = loss * self._U[user_id] + self.__lambda * self._V[pos_sample]
+        dni = loss * -self._U[user_id] + self.__lambda * self._V[neg_sample]
 
         self._U[user_id] -= self.__lr * du
         self._V[pos_sample] -= self.__lr * dpi
         self._V[neg_sample] -= self.__lr * dni
+
+    def _step(self, user_id: int, pos_sample: int, user_item_csr: csr_matrix) -> float:
+        neg_sample = self._sample_negative(user_id, user_item_csr)
+
+        # [ 1 ]
+        r_uij = numpy.dot(self._U[user_id], self._V[pos_sample] - self._V[neg_sample])
+        sigmoid = expit(r_uij)
+
+        self._gradient_step(sigmoid, user_id, pos_sample, neg_sample)
 
         return numpy.log(sigmoid)
 

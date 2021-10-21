@@ -4,7 +4,7 @@ import numpy
 from numpy import ndarray
 from tqdm.auto import tqdm, trange
 
-from matrix_factorization_base import MatrixFactorizationBase
+from .matrix_factorization_base import MatrixFactorizationBase
 
 
 class SVD(MatrixFactorizationBase):
