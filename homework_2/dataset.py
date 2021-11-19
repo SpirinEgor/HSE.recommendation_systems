@@ -40,9 +40,10 @@ class DatasetBuilder:
     MEMBERS_FILE = "members.csv"
     SONG_FILE = "songs.csv"
 
-    def __init__(self, data_dir: str, svd_components: int):
+    def __init__(self, data_dir: str, max_query_size: int, svd_components: int):
         self.__data_dir = data_dir
         self.__svd_components = svd_components
+        self.__max_query_size = max_query_size
 
     @staticmethod
     def convert_age(value: str, bottom: int = 10, upper: int = 70) -> Optional[np.int32]:
@@ -141,6 +142,10 @@ class DatasetBuilder:
 
         # Order data by user id using stable sort (CatBoost requirements)
         full_data.sort_values("msno", kind="stable", inplace=True)
+
+        # Training on GPU in sensitive to number of documents per query
+        print("Removing users with too much songs...")
+        full_data = full_data.groupby(["msno"]).head(self.__max_query_size).reset_index(drop=True)
 
         user_id = full_data["msno"].to_numpy()
         target = full_data["target"].to_numpy()
