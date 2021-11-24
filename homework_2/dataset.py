@@ -39,17 +39,24 @@ class DatasetBuilder:
     TRAIN_FILE = "train.csv"
     MEMBERS_FILE = "members.csv"
     SONG_FILE = "songs.csv"
+    SONG_EXTRA_INFO_FILE = "song_extra_info.csv"
 
-    def __init__(self, data_dir: str, max_query_size: int, svd_components: int):
+    def __init__(self, data_dir: str, svd_components: int):
         self.__data_dir = data_dir
         self.__svd_components = svd_components
-        self.__max_query_size = max_query_size
 
     @staticmethod
-    def convert_age(value: str, bottom: int = 10, upper: int = 70) -> Optional[np.int32]:
-        """Replace outliers in age with None."""
-        value = np.int32(value)
-        return value if bottom < value < upper else None
+    def create_age_converter(bottom_age: Optional[int] = None, upper_age: Optional[int] = None):
+        def convert_age(value: str) -> Optional[np.int32]:
+            """Replace outliers in age with None."""
+            value = np.int32(value)
+            if bottom_age is not None and value < bottom_age:
+                return None
+            if upper_age is not None and value > upper_age:
+                return None
+            return value
+
+        return convert_age
 
     @staticmethod
     def create_categorical_converter():
@@ -87,9 +94,8 @@ class DatasetBuilder:
         values = [it.strip().lower() for it in re.split(self._split_regexp, value)]
         return [re.sub(self._sub_regexp, "", it) for it in values]
 
-    def build_dataset(self) -> Dataset:
-        print("Reading data...")
-        train = read_csv(
+    def read_train_data(self) -> DataFrame:
+        return read_csv(
             join(self.__data_dir, self.TRAIN_FILE),
             dtype={"target": np.byte},
             converters={
@@ -98,18 +104,21 @@ class DatasetBuilder:
                 "source_type": self.create_categorical_converter(),
             },
         )
-        members = read_csv(
+
+    def read_members_data(self, bottom_age: Optional[int] = None, upper_age: Optional[int] = None) -> DataFrame:
+        return read_csv(
             join(self.__data_dir, self.MEMBERS_FILE),
             index_col="msno",
             dtype={"registration_init_time": np.int32, "expiration_date": np.int32},
             converters={
                 "gender": self.create_categorical_converter(),
-                "bd": self.convert_age,
+                "bd": self.create_age_converter(bottom_age, upper_age),
                 "city": self.create_categorical_converter(),
                 "registered_via": self.create_categorical_converter(),
             },
         )
-        members["bd"] = members["bd"].fillna(members["bd"].mean()).astype(np.int32)
+
+    def read_song_data(self, use_extra_info: bool = False) -> DataFrame:
         song = read_csv(
             join(self.__data_dir, self.SONG_FILE),
             index_col="song_id",
@@ -119,11 +128,22 @@ class DatasetBuilder:
                 "genre_ids": self.create_categorical_converter(),
             },
         )
+        if use_extra_info:
+            song_extra_info = read_csv(join(self.__data_dir, self.SONG_EXTRA_INFO_FILE), index_col="song_id")
+            song = song.merge(song_extra_info, how="left", left_index=True, right_index=True)
+        return song
+
+    def build_dataset(self) -> Tuple[DataFrame, List[str]]:
+        print("Reading data...")
+        train = self.read_train_data()
+        members = self.read_members_data(10, 70)
+        members["bd"] = members["bd"].fillna(members["bd"].mean()).astype(np.int32)
+        song = self.read_song_data(use_extra_info=True)
 
         # Building embeddings for artist, composer, and lyricist
         print("Building embeddings for song...")
         combination = (
-            song[["artist_name", "composer", "lyricist"]]
+            song[["artist_name", "composer", "lyricist", "name"]]
             .apply(lambda x: " ".join(sum([self.parse_str_value(it) for it in x], [])), axis=1)
             .to_list()
         )
@@ -133,31 +153,24 @@ class DatasetBuilder:
         song.drop(["artist_name", "composer", "lyricist"], axis=1, inplace=True)
 
         print("Joining all data into one single table...")
-        full_data = train.merge(members, on="msno", how="inner")
-        full_data = full_data.merge(song, on="song_id", how="inner")
+        full_data = train.merge(members, on="msno", how="left")
+        full_data = full_data.merge(song, on="song_id", how="left")
 
-        # Replace string identifiers with number for faster computation
-        full_data["msno"] = full_data["msno"].apply(self.create_categorical_converter())
-        full_data["song_id"] = full_data["song_id"].apply(self.create_categorical_converter())
+        na_mask = full_data.isna().any(axis=1)
+        full_data = full_data[~na_mask]
 
         # Order data by user id using stable sort (CatBoost requirements)
-        full_data.sort_values("msno", kind="stable", inplace=True)
+        full_data.sort_values("msno", inplace=True)
 
-        # Training on GPU in sensitive to number of documents per query
-        print("Removing users with too much songs...")
-        full_data = full_data.groupby(["msno"]).head(self.__max_query_size).reset_index(drop=True)
-
-        user_id = full_data["msno"].to_numpy()
-        target = full_data["target"].to_numpy()
-        features = full_data.drop(["msno", "target"], axis=1)
-
-        features_columns = features.columns.tolist()
-        not_cat_columns = ["song_length", "registration_init_time", "expiration_date", "bd"] + emb_col_names
-        cat_features = [it for it in features_columns if it not in not_cat_columns]
+        all_columns = full_data.columns.tolist()
+        not_cat_columns = ["msno", "target", "song_length", "registration_init_time", "expiration_date", "bd"]
+        cat_features = [it for it in all_columns if it not in not_cat_columns and it not in emb_col_names]
 
         # Optimize categorical variables, convert into range 0..n
         print("Processing categorical features...")
         for cat_feature in cat_features:
-            features[cat_feature] = features[cat_feature].apply(self.create_categorical_converter())
+            if cat_feature in ["msno", "song_id"]:
+                continue
+            full_data[cat_feature] = full_data[cat_feature].apply(self.create_categorical_converter())
 
-        return Dataset(features, user_id, target, cat_features)
+        return full_data, cat_features
